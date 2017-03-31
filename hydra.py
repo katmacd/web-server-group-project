@@ -4,7 +4,7 @@
 #######################################
 #
 #  Hydra is a tool for testing your webserver
-# 
+#
 #  Hydra reads in a test script from stdin, i.e. to run hydra use the command:
 #
 #  ./hydra.py < test.in
@@ -83,7 +83,7 @@ class RequestHead(threading.Thread):
       time.sleep( self.delay )
 
     sock = socket.socket();
-    try: 
+    try:
       sock.connect( ("localhost", port) );
     except:
       print "Unable to connect"
@@ -93,8 +93,8 @@ class RequestHead(threading.Thread):
     if self.pause > 0:
       time.sleep( self.pause )
 
-    try: 
-      req = "GET /" + self.file + " HTTP/1.1\nHost: localhost\n\n" 
+    try:
+      req = "GET /" + self.file + " HTTP/1.1\nHost: localhost\n\n"
       req_time = time.time()
       sock.sendall( req )
       sock.shutdown( socket.SHUT_WR )
@@ -106,9 +106,7 @@ class RequestHead(threading.Thread):
         resp = sock.recv( 8192 )
       completed.put( self.seq )
       result = result + resp
-      print result + "\n\n\n"
       req_time = time.time() - req_time
-
       sock.close()
     except:
       print "Socket failure"
@@ -126,7 +124,7 @@ class RequestHead(threading.Thread):
 
     finished = finished + 1
 
-      
+
 try:
   for line in sys.stdin.readlines():
     req = string.split( string.strip( line ), " " )
