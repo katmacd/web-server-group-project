@@ -15,7 +15,7 @@
 #include "network.h"
 #include "priority_queue.h"
 
-#define MAX_HTTP_SIZE 8192                 /* size of buffer to allocate */
+#define MAX_HTTP_SIZE 3192                 /* size of buffer to allocate */
 #define NUM_THREADS 10
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -114,8 +114,10 @@ static void serve_client(int fd) {
 
           len = write(popped_rcb->rcb_cli_desc, buffer, len);
 
-          close(popped_rcb->rcb_cli_desc);
-          free(popped_rcb);
+          if (len < MAX_HTTP_SIZE) {
+            close(popped_rcb->rcb_cli_desc);
+            free(popped_rcb);
+          }
           if (len < 1) {                           /* check for errors */
             perror("Error while writing to client");
           }
