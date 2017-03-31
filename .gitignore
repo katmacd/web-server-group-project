@@ -10,3 +10,5 @@ gen
 .idea/
 CMakeLists.txt
 cmake-build-debug/
+*.o
+sws
