@@ -16,14 +16,13 @@
 #include "priority_queue.h"
 
 #define MAX_HTTP_SIZE 8192                 /* size of buffer to allocate */
-#define NUM_THREADS 1
+#define NUM_THREADS 10
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int counter = 0;
 heap_t heap;
 pthread_t worker_threads[NUM_THREADS];
-pthread_t init_thread;
 char alg_to_use[5];
 
 void decide_and_push(FILE *fin, int fd, char *buffer) {
@@ -130,6 +129,7 @@ static void serve_client(int fd) {
 void *worker_thread(void *data) {
   int fd;
   for (;;) {                                       /* main loop */
+
     network_wait();                                 /* wait for clients */
 
     for (fd = network_open(); fd >= 0; fd = network_open()) { /* get clients */
@@ -167,6 +167,5 @@ int main(int argc, char **argv) {
   for (i = 0; i < NUM_THREADS; i++) {
     pthread_join(worker_threads[i], NULL);
   }
-  pthread_join(init_thread, NULL);
   return EXIT_SUCCESS;
 }
