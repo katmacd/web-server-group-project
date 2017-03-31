@@ -28,7 +28,7 @@ char alg_to_use[5];
 
 void decide_and_push(FILE *fin, int fd, char *buffer) {
 
-  rcb *new_rcb = ( rcb * ) malloc(sizeof(rcb *));/* TODO: free later */
+  rcb *new_rcb = ( rcb * ) malloc(sizeof(rcb *));
   new_rcb->rcb_seq_num = counter; /* TODO: This may have to be fixed later */
   new_rcb->rcb_cli_desc = fd;
   new_rcb->rcb_serv_handle = fin;
