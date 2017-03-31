@@ -16,11 +16,13 @@
 #include "priority_queue.h"
 
 #define MAX_HTTP_SIZE 8192                 /* size of buffer to allocate */
+#define NUM_THREADS 1
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
 int counter = 0;
 heap_t heap;
-pthread_t worker_threads[64];
+pthread_t worker_threads[NUM_THREADS];
 pthread_t init_thread;
 char alg_to_use[5];
 
@@ -114,6 +116,7 @@ static void serve_client(int fd) {
           len = write(popped_rcb->rcb_cli_desc, buffer, len);
 
           close(popped_rcb->rcb_cli_desc);
+          free(popped_rcb);
           if (len < 1) {                           /* check for errors */
             perror("Error while writing to client");
           }
@@ -122,7 +125,6 @@ static void serve_client(int fd) {
       fclose(fin);
     }
   }
-  /* close client connectuin*/
 }
 
 void *worker_thread(void *data) {
@@ -147,10 +149,8 @@ void *worker_thread(void *data) {
  * Returns: an integer status code, 0 for success, something else for error.
  */
 int main(int argc, char **argv) {
-  int port = -1;                                    /* server port # */
-  /* client file descriptor */
+  int port = -1;
 
-  /* check for and process parameters */
   if ((argc < 3) || (sscanf(argv[1], "%d", &port) < 1)
       || *(strcpy(alg_to_use, argv[2])) < 1) {
     printf("usage: sws <port> <algorithm>\n");
@@ -158,20 +158,15 @@ int main(int argc, char **argv) {
   }
 
   strcpy(alg_to_use, argv[2]);
-
-  network_init(port);                             /* init network module */
+  network_init(port);
 
   int i;
-
-  for (i = 0; i < 64; i++) {
+  for (i = 0; i < NUM_THREADS; i++) {
     pthread_create(&worker_threads[i], NULL, worker_thread, NULL);
   }
-
-  for (i = 0; i < 64; i++) {
+  for (i = 0; i < NUM_THREADS; i++) {
     pthread_join(worker_threads[i], NULL);
   }
-
   pthread_join(init_thread, NULL);
   return EXIT_SUCCESS;
-
 }
