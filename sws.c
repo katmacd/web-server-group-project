@@ -19,6 +19,7 @@
 #define NUM_THREADS 10
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+int QUANTUM = 4;
 
 int counter = 0;
 heap_t heap;
@@ -27,12 +28,19 @@ char alg_to_use[5];
 
 rcb *create_rcb(FILE *fin, int fd, char *buffer) {
   rcb *new_rcb = (rcb *) malloc(sizeof(rcb));
+  new_rcb->rcb_seq_num = counter; /* TODO: This may have to be fixed later */
+  new_rcb->rcb_cli_desc = fd;
+  new_rcb->rcb_serv_handle = fin;
   if (strcmp(alg_to_use, "sjf") == 0) {
-    new_rcb->rcb_seq_num = counter; /* TODO: This may have to be fixed later */
-    new_rcb->rcb_cli_desc = fd;
-    new_rcb->rcb_serv_handle = fin;
-    new_rcb->rcb_file_bytes_remain = fread(buffer, 1, MAX_HTTP_SIZE, fin); /* read file chunk */
+    QUANTUM = MAX_HTTP_SIZE; //TODO: make this not temporary
+    new_rcb->rcb_quantum = MAX_HTTP_SIZE;
+    new_rcb->rcb_file_bytes_remain = fread(buffer, 1, new_rcb->rcb_quantum, fin); /* read file chunk */
     new_rcb->rcb_priority = new_rcb->rcb_file_bytes_remain;
+  }
+  if (strcmp(alg_to_use, "rr") == 0) {
+    new_rcb->rcb_quantum = QUANTUM;
+    new_rcb->rcb_file_bytes_remain = fread(buffer, 1, new_rcb->rcb_quantum, fin); /* read file chunk */
+    new_rcb->rcb_priority = 1;
   }
   return new_rcb;
 }
@@ -42,6 +50,7 @@ void lock_push(rcb *new_rcb) {
   printf("pushing with priority %d\n", new_rcb->rcb_priority);
   push(&heap, new_rcb->rcb_priority, new_rcb);
   pthread_mutex_unlock(&mutex);
+  //usleep(new_rcb->rcb_file_bytes_remain * 100000); /* to pretend it is a large file*/
 }
 
 rcb *loop_and_pop() {
@@ -50,7 +59,6 @@ rcb *loop_and_pop() {
   rcb *popped_rcb = pop(&heap);
   printf("pooping with priority %d\n", popped_rcb->rcb_priority);
   pthread_mutex_unlock(&mutex);
-  usleep(popped_rcb->rcb_file_bytes_remain * 100000); /* to pretend it is a large file*/
   return popped_rcb;
 }
 
@@ -112,15 +120,14 @@ void serve_client(int fd) {
         lock_push(push_rcb);
         rcb *popped_rcb = loop_and_pop();
         len = popped_rcb->rcb_file_bytes_remain;
+        printf("buffer %s\n", buffer);
         if (len < 0) {     /* check for errors */
           perror("Error while writing to client");
         } else if (len > 0) { /* if none, send chunk */
 
-          if (strcmp(alg_to_use, "sjf") == 0) {
-            len = write(popped_rcb->rcb_cli_desc, buffer, len);
-          }
+          len = write(popped_rcb->rcb_cli_desc, buffer, len);
 
-          if (len < MAX_HTTP_SIZE) {
+          if (len < QUANTUM) {
             close(popped_rcb->rcb_cli_desc);
             free(popped_rcb);
           }
@@ -128,7 +135,7 @@ void serve_client(int fd) {
             perror("Error while writing to client");
           }
         }
-      } while (len == MAX_HTTP_SIZE); /* the last chunk < 8192 */
+      } while (len == QUANTUM); /* the last chunk < 8192 */
       fclose(fin);
     }
   }
