@@ -168,6 +168,7 @@ rcb *pop_assign(int len) {
 
 void serve_client(int len, char *buffer, rcb *popped_rcb) {
   do {
+    len = fread(buffer, 1, popped_rcb->rcb_quantum, popped_rcb->rcb_serv_handle); 
     if (len < 0) {
       perror("Error while writing to client");
     } else if (len > 0) {
@@ -194,7 +195,7 @@ void *worker_thread(void *data) {
   while (1) {
     popped_rcb = pop_assign(len);
     if (popped_rcb) {
-      len = fread(buffer, 1, popped_rcb->rcb_quantum, popped_rcb->rcb_serv_handle); /* read file chunk */
+    /* read file chunk */
       popped_rcb->rcb_file_bytes_remain = popped_rcb->rcb_file_bytes_remain - len;
 
       if ((is_mlfb)) {
