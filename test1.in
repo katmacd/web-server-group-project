@@ -2,6 +2,7 @@
 
 0 0 test_files/size_8.txt
 0 0 test_files/size_64.txt
+0 0 test_files/size_128.txt
 0 0 test_files/size_0.txt
 0 0 test_files/size_32.txt
 0 0 test_files/size_16.txt
