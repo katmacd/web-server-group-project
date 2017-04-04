@@ -38,7 +38,6 @@
 #
 # the times of the response are printed instead of the output.
 
-
 import threading
 import sys
 import socket
