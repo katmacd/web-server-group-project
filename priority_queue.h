@@ -7,6 +7,7 @@ typedef struct {
   int rcb_file_bytes_remain;
   int rcb_quantum;
   int rcb_priority;
+  int rcb_queue_level;
 } rcb;
 
 typedef struct {
