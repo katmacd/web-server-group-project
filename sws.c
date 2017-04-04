@@ -1,3 +1,4 @@
+
 /*
  * File: sws.c
  * Author: Alex Brodsky
@@ -15,8 +16,8 @@
 #include "network.h"
 #include "priority_queue.h"
 
-#define MAX_HTTP_SIZE 8192                 /* size of buffer to allocate */
-#define NUM_THREADS 10
+#define MAX_HTTP_SIZE 8000            /* size of buffer to allocate */
+#define NUM_THREADS 1
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 int rr_quantum = 4;
@@ -82,7 +83,7 @@ void lock_push(rcb *new_rcb, heap_t *queue) {
  * Returns: None
  */
 void init_client(int fd) {
-  char *buffer = (char *) malloc(sizeof(char) * MAX_HTTP_SIZE);                        /* request buffer */
+  char *buffer = malloc(MAX_HTTP_SIZE);                        /* request buffer */
 
   if (!buffer) {                     /* error check */
     perror("Error while allocating memory");
@@ -143,7 +144,6 @@ void *starter_thread(void *data) {
   }
 }
 
-
 rcb *pop_assign(int len) {
 /* length of data read */
   rcb *popped_rcb;
@@ -161,28 +161,16 @@ rcb *pop_assign(int len) {
     printf("pooping with priority %d\n", popped_rcb->rcb_priority);
     len = popped_rcb->rcb_file_bytes_remain;
   }
-  pthread_mutex_unlock(&mutex);
+  pthread_mutex_unlock(&mutex);;
   return popped_rcb;
 }
 
+//id serve_client(int len, char *buffer, rcb *popped_rcb) {
 
-void serve_client(int len, char *buffer, rcb *popped_rcb) {
-  do {
-    len = fread(buffer, 1, popped_rcb->rcb_quantum, popped_rcb->rcb_serv_handle); 
-    if (len < 0) {
-      perror("Error while writing to client");
-    } else if (len > 0) {
-      printf("buffer %s\n", buffer);
-      len = write(popped_rcb->rcb_cli_desc, buffer, len);
-      if (len < 1) {
-        perror("Error while writing to client");
-      }
-    }
-  } while (len == MAX_HTTP_SIZE);
-}
+//}
 
 void *worker_thread(void *data) {
-  char *buffer = (char *) malloc(sizeof(char) * MAX_HTTP_SIZE);                        /* request buffer */
+  char *buffer = malloc(sizeof(char) * MAX_HTTP_SIZE);                        /* request buffer */
   rcb *popped_rcb;
 
   if (!buffer) {                     /* error check */
@@ -195,8 +183,7 @@ void *worker_thread(void *data) {
   while (1) {
     popped_rcb = pop_assign(len);
     if (popped_rcb) {
-    /* read file chunk */
-      popped_rcb->rcb_file_bytes_remain = popped_rcb->rcb_file_bytes_remain - len;
+
 
       if ((is_mlfb)) {
         if (popped_rcb->rcb_file_bytes_remain != 0 && popped_rcb->rcb_queue_level == 0) {
@@ -208,7 +195,25 @@ void *worker_thread(void *data) {
         }
       }
 
-      serve_client(len, buffer, popped_rcb);
+
+      do {                                          /* loop, read & send file */
+        len = fread(buffer, 1, popped_rcb->rcb_quantum, popped_rcb->rcb_serv_handle); /* read file chunk */
+        popped_rcb->rcb_file_bytes_remain = popped_rcb->rcb_file_bytes_remain - len;
+
+
+        if (len < 0) {                             /* check for errors */
+          perror("Error while writing to client");
+        } else if (len > 0) {                      /* if none, send chunk */
+
+          printf("%s\n", buffer);
+          len = write(popped_rcb->rcb_cli_desc, buffer, len);
+          if (len < 1) {                           /* check for errors */
+            perror("Error while writing to client");
+          }
+        }
+      } while (len == MAX_HTTP_SIZE);              /* the last chunk < 8192 */
+
+
 
       if (!(is_mlfb)) {
         if (len == rr_quantum) {
@@ -242,7 +247,6 @@ void *worker_thread(void *data) {
     popped_rcb = NULL;
   }
 }
-
 
 /* This function is where the program starts running.
  *    The function first parses its command line parameters to determine port #
