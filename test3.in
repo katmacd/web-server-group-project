@@ -1,3 +1,5 @@
 38080
 
-0 0 test_files/size_16.txt
+0 0 test_files/f_lrg.txt
+0 0 test_files/f_mid.txt
+0 0 test_files/f_sma.txt

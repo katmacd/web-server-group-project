@@ -15,8 +15,8 @@
 #include "network.h"
 #include "priority_queue.h"
 
-#define MAX_HTTP_SIZE 8000            /* size of buffer to allocate */
-#define NUM_THREADS 1
+#define MAX_HTTP_SIZE 8192
+#define NUM_THREADS 5
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 int rr_quantum = 4;
@@ -33,7 +33,8 @@ int is_mlfb = 0;
 int is_rr = 0;
 
 pthread_t worker_threads[NUM_THREADS];
-pthread_t client_serve_thread;
+pthread_t client_serve_threads[NUM_THREADS];
+
 char alg_to_use[5];
 
 rcb *create_rcb(FILE *fin, int fd, char *buffer) {
@@ -82,7 +83,7 @@ void lock_push(rcb *new_rcb, heap_t *queue) {
  * Returns: None
  */
 void init_client(int fd) {
-  char *buffer = malloc(MAX_HTTP_SIZE);                        /* request buffer */
+  char *buffer = malloc(MAX_HTTP_SIZE);
 
   if (!buffer) {                     /* error check */
     perror("Error while allocating memory");
@@ -129,7 +130,7 @@ void init_client(int fd) {
       lock_push(push_rcb, &max_queue);
     }
   }
-  free(buffer);
+  //free(buffer);
 }
 
 void *starter_thread(void *data) {
@@ -164,10 +165,6 @@ rcb *pop_assign(int len) {
   return popped_rcb;
 }
 
-//id serve_client(int len, char *buffer, rcb *popped_rcb) {
-
-//}
-
 void *worker_thread(void *data) {
   char *buffer = malloc(sizeof(char) * MAX_HTTP_SIZE);                        /* request buffer */
   rcb *popped_rcb;
@@ -176,7 +173,6 @@ void *worker_thread(void *data) {
     perror("Error while allocating memory");
     abort();
   }
-
   int len = -1;
 
   while (1) {
@@ -199,7 +195,6 @@ void *worker_thread(void *data) {
         len = fread(buffer, 1, popped_rcb->rcb_quantum, popped_rcb->rcb_serv_handle); /* read file chunk */
         popped_rcb->rcb_file_bytes_remain = popped_rcb->rcb_file_bytes_remain - len;
 
-
         if (len < 0) {                             /* check for errors */
           perror("Error while writing to client");
         } else if (len > 0) {                      /* if none, send chunk */
@@ -211,7 +206,6 @@ void *worker_thread(void *data) {
           }
         }
       } while (len == MAX_HTTP_SIZE);              /* the last chunk < 8192 */
-
 
 
       if (!(is_mlfb)) {
@@ -273,14 +267,18 @@ int main(int argc, char **argv) {
 
   network_init(port);
 
-  pthread_create(&client_serve_thread, NULL, worker_thread, NULL);
   int i;
+  for (i = 0; i < NUM_THREADS; i++) {
+    pthread_create(&client_serve_threads[i], NULL, worker_thread, NULL);
+  }
   for (i = 0; i < NUM_THREADS; i++) {
     pthread_create(&worker_threads[i], NULL, starter_thread, NULL);
   }
   for (i = 0; i < NUM_THREADS; i++) {
     pthread_join(worker_threads[i], NULL);
   }
-  pthread_join(client_serve_thread, NULL);
+  for (i = 0; i < NUM_THREADS; i++) {
+    pthread_join(client_serve_threads[i], NULL);
+  }
   return EXIT_SUCCESS;
 }
