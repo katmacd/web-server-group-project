@@ -15,18 +15,18 @@
 #include "network.h"
 #include "priority_queue.h"
 
-#define MAX_HTTP_SIZE 8192
+#define MAX_HTTP_SIZE 8000
 #define NUM_THREADS 5
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-int rr_quantum = 4;
+int rr_quantum = 4000;
 int counter = 0;
 heap_t max_queue;
 heap_t mid_queue;
 heap_t min_queue;
 
-int max_queue_quantum = 4;
-int mid_queue_quantum = 8;
+int max_queue_quantum = 2000;
+int mid_queue_quantum = 4000;
 
 int is_sjf = 0;
 int is_mlfb = 0;
@@ -48,7 +48,6 @@ rcb *create_rcb(FILE *fin, int fd, char *buffer) {
   int len_file = ftell(new_rcb->rcb_serv_handle);
   rewind(new_rcb->rcb_serv_handle);
   if (is_sjf) {
-    rr_quantum = MAX_HTTP_SIZE; //TODO: make this not temporary
     new_rcb->rcb_quantum = MAX_HTTP_SIZE;
     new_rcb->rcb_file_bytes_remain = len_file;
     new_rcb->rcb_priority = len_file;
@@ -130,7 +129,7 @@ void init_client(int fd) {
       lock_push(push_rcb, &max_queue);
     }
   }
-  //free(buffer);
+  free(buffer);
 }
 
 void *starter_thread(void *data) {
@@ -160,6 +159,8 @@ rcb *pop_assign(int len) {
     popped_rcb = pop(&min_queue);
     printf("pooping with priority %d\n", popped_rcb->rcb_priority);
     len = popped_rcb->rcb_file_bytes_remain;
+  } else {
+    popped_rcb = NULL;
   }
   pthread_mutex_unlock(&mutex);;
   return popped_rcb;
@@ -178,8 +179,6 @@ void *worker_thread(void *data) {
   while (1) {
     popped_rcb = pop_assign(len);
     if (popped_rcb) {
-
-
       if ((is_mlfb)) {
         if (popped_rcb->rcb_file_bytes_remain != 0 && popped_rcb->rcb_queue_level == 0) {
           popped_rcb->rcb_queue_level = 1;
@@ -207,24 +206,28 @@ void *worker_thread(void *data) {
         }
       } while (len == MAX_HTTP_SIZE);              /* the last chunk < 8192 */
 
-
-      if (!(is_mlfb)) {
-        if (len == rr_quantum) {
-
+      if (is_rr) {
+        if (popped_rcb->rcb_file_bytes_remain > popped_rcb->rcb_quantum) {
           lock_push(popped_rcb, &max_queue);
-
-        }
-        if (len < rr_quantum) {
+        } else {
           close(popped_rcb->rcb_cli_desc);
           fclose(popped_rcb->rcb_serv_handle);
           free(popped_rcb);
         }
-      } else {
+      }
+
+      if (is_sjf) {
+        close(popped_rcb->rcb_cli_desc);
+        fclose(popped_rcb->rcb_serv_handle);
+        free(popped_rcb);
+      }
+
+
+      if (is_mlfb) {
         if (len == max_queue_quantum || len == mid_queue_quantum) {
           if (popped_rcb->rcb_queue_level == 1) {
             printf("pushed to mid q");
             lock_push(popped_rcb, &mid_queue);
-
           }
           if (popped_rcb->rcb_queue_level == 2) {
             printf("pushed to min q");
@@ -236,8 +239,8 @@ void *worker_thread(void *data) {
           free(popped_rcb);
         }
       }
+
     }
-    popped_rcb = NULL;
   }
 }
 
