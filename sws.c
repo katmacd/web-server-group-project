@@ -1,12 +1,3 @@
-/*
- * File: sws.c
- * Author: Alex Brodsky
- * Purpose: This file contains the implementation of a simple web server.
- *          It consists of two functions: main() which contains the main
- *          loop accept client connections, and init_client(), which
- *          processes each client request.
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,24 +6,24 @@
 #include "network.h"
 #include "priority_queue.h"
 
-#define MAX_HTTP_SIZE 8000
-#define NUM_THREADS 5
+#define MAX_HTTP_SIZE 80 //8892
+#define NUM_THREADS 64
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-int rr_quantum = 4000;
+int rr_quantum = 2; // = 2048;
 int counter = 0;
 heap_t max_queue;
 heap_t mid_queue;
 heap_t min_queue;
 
-int max_queue_quantum = 2000;
-int mid_queue_quantum = 4000;
+int max_queue_quantum = 2; //= 2048;
+int mid_queue_quantum = 4; //= 4096;
 
 int is_sjf = 0;
 int is_mlfb = 0;
 int is_rr = 0;
 
-pthread_t worker_threads[NUM_THREADS];
+pthread_t init_threads[NUM_THREADS];
 pthread_t client_serve_threads[NUM_THREADS];
 
 char alg_to_use[5];
@@ -68,7 +59,7 @@ rcb *create_rcb(FILE *fin, int fd, char *buffer) {
 
 void lock_push(rcb *new_rcb, heap_t *queue) {
   pthread_mutex_lock(&mutex);
-  printf("pushing with priority %d\n", new_rcb->rcb_priority);
+  //printf("pushing with priority %d\n", new_rcb->rcb_priority);
   push(queue, new_rcb->rcb_priority, new_rcb);
   pthread_mutex_unlock(&mutex);
 }
@@ -82,20 +73,21 @@ void lock_push(rcb *new_rcb, heap_t *queue) {
  * Returns: None
  */
 void init_client(int fd) {
-  char *buffer = malloc(MAX_HTTP_SIZE);
+  char *buffer = malloc(sizeof(char) * MAX_HTTP_SIZE);
+  memset(buffer, 0, sizeof(char) * MAX_HTTP_SIZE);
 
-  if (!buffer) {                     /* error check */
+  if (!buffer) {
     perror("Error while allocating memory");
     abort();
   }
 
-  char *req = NULL;                           /* ptr to req file */
-  char *brk;                                  /* state used by strtok */
-  char *tmp;                                  /* error checking ptr */
-  FILE *fin;                                  /* input file handle */
-  int len;                                    /* length of data read */
+  char *req = NULL;
+  char *brk;
+  char *tmp;
+  FILE *fin;
+  int len;
 
-  if (read(fd, buffer, MAX_HTTP_SIZE) <= 0) { /* read req from client */
+  if (read(fd, buffer, MAX_HTTP_SIZE) <= 0) {
     perror("Error while reading request");
     abort();
   }
@@ -104,26 +96,24 @@ void init_client(int fd) {
    *   GET /foo/bar/qux.html HTTP/1.1
    * We want the second token (the file path).
    */
-  tmp = strtok_r(buffer, " ", &brk);        /* parse request */
+  tmp = strtok_r(buffer, " ", &brk);
   if (tmp && !strcmp("GET", tmp)) {
     req = strtok_r(NULL, " ", &brk);
   }
 
-  if (!req) {                                /* is req valid? */
+  if (!req) {
     len = sprintf(buffer, "HTTP/1.1 400 Bad request \n\n");
-    write(fd, buffer, len);           /* if not, send err */
+    write(fd, buffer, len);
     close(fd);
-  } else {                                    /* if so, open file */
-    req++;                              /* skip leading / */
-
-    fin = fopen(req, "r");            /* open file */
-
-    if (!fin) {                        /* check if successful */
+  } else {
+    req++;
+    fin = fopen(req, "r");
+    if (!fin) {
       len = sprintf(buffer, "HTTP/1.1 404 File not found \n\n");
-      write(fd, buffer, len);   /* if not, send err */
+      write(fd, buffer, len);
       close(fd);
-    } else {                            /* if so, send file */
-      len = sprintf(buffer, "HTTP/1.1 200 OK\n\n");/* send success code */
+    } else {
+      len = sprintf(buffer, "HTTP/1.1 200 OK\n\n");
       write(fd, buffer, len);
       rcb *push_rcb = create_rcb(fin, fd, buffer);
       lock_push(push_rcb, &max_queue);
@@ -132,32 +122,31 @@ void init_client(int fd) {
   free(buffer);
 }
 
-void *starter_thread(void *data) {
+void *init(void *data) {
   int fd;
-  for (;;) {                                /* main loop */
-    network_wait();                     /* wait for clients */
+  for (;;) {
+    network_wait();
 
-    for (fd = network_open(); fd >= 0; fd = network_open()) { /* get clients */
-      init_client(fd);         /* process each client */
+    for (fd = network_open(); fd >= 0; fd = network_open()) {
+      init_client(fd);
     }
   }
 }
 
 rcb *pop_assign(int len) {
-/* length of data read */
   rcb *popped_rcb;
   pthread_mutex_lock(&mutex);
   if (max_queue.len > 0) {
     popped_rcb = pop(&max_queue);
-    printf("pooping with priority %d\n", popped_rcb->rcb_priority);
+    //printf("pooping with priority %d\n", popped_rcb->rcb_priority);
     len = popped_rcb->rcb_file_bytes_remain;
   } else if (max_queue.len == 0 && mid_queue.len > 0 && is_mlfb) {
     popped_rcb = pop(&mid_queue);
-    printf("pooping with priority %d\n", popped_rcb->rcb_priority);
+    //printf("pooping with priority %d\n", popped_rcb->rcb_priority);
     len = popped_rcb->rcb_file_bytes_remain;
   } else if (max_queue.len == 0 && mid_queue.len == 0 && min_queue.len > 0 && is_mlfb) {
     popped_rcb = pop(&min_queue);
-    printf("pooping with priority %d\n", popped_rcb->rcb_priority);
+    //printf("pooping with priority %d\n", popped_rcb->rcb_priority);
     len = popped_rcb->rcb_file_bytes_remain;
   } else {
     popped_rcb = NULL;
@@ -166,17 +155,16 @@ rcb *pop_assign(int len) {
   return popped_rcb;
 }
 
-void *worker_thread(void *data) {
-  char *buffer = malloc(sizeof(char) * MAX_HTTP_SIZE);                        /* request buffer */
+void *work(void *data) {
+  char *buffer = malloc(sizeof(char) * MAX_HTTP_SIZE);
+  memset(buffer, 0, sizeof(char) * MAX_HTTP_SIZE);
   rcb *popped_rcb;
-
-  if (!buffer) {                     /* error check */
+  if (!buffer) {
     perror("Error while allocating memory");
     abort();
   }
-  int len = -1;
-
   while (1) {
+    int len = -1;
     //TODO: Fix this busy waiting
     popped_rcb = pop_assign(len);
     if (popped_rcb) {
@@ -190,21 +178,20 @@ void *worker_thread(void *data) {
         }
       }
 
-      do {                                          /* loop, read & send file */
+      do {
         len = fread(buffer, 1, popped_rcb->rcb_quantum, popped_rcb->rcb_serv_handle); /* read file chunk */
         popped_rcb->rcb_file_bytes_remain = popped_rcb->rcb_file_bytes_remain - len;
-
-        if (len < 0) {                             /* check for errors */
+        if (len < 0) {
           perror("Error while writing to client");
-        } else if (len > 0) {                      /* if none, send chunk */
-
-          printf("%s\n", buffer);
+        } else if (len > 0) {
+          /* send chunk */
+          //printf("%s\n", buffer);
           len = write(popped_rcb->rcb_cli_desc, buffer, len);
-          if (len < 1) {                           /* check for errors */
+          if (len < 1) {
             perror("Error while writing to client");
           }
         }
-      } while (len == MAX_HTTP_SIZE);              /* the last chunk < 8192 */
+      } while (len == MAX_HTTP_SIZE);
 
       if (is_rr) {
         if (popped_rcb->rcb_file_bytes_remain > popped_rcb->rcb_quantum) {
@@ -225,11 +212,9 @@ void *worker_thread(void *data) {
       if (is_mlfb) {
         if (len == max_queue_quantum || len == mid_queue_quantum) {
           if (popped_rcb->rcb_queue_level == 1) {
-            printf("pushed to mid q");
             lock_push(popped_rcb, &mid_queue);
           }
           if (popped_rcb->rcb_queue_level == 2) {
-            printf("pushed to min q");
             lock_push(popped_rcb, &min_queue);
           }
         } else if (len < rr_quantum) {
@@ -243,16 +228,6 @@ void *worker_thread(void *data) {
   }
 }
 
-/* This function is where the program starts running.
- *    The function first parses its command line parameters to determine port #
- *    Then, it initializes, the network and enters the main loop.
- *    The main loop waits for a client (1 or more to connect, and then processes
- *    all clients by calling the seve_client() function for each one.
- * Parameters:
- *             argc : number of command line parameters (including program name
- *             argv : array of pointers to command line parameters
- * Returns: an integer status code, 0 for success, something else for error.
- */
 int main(int argc, char **argv) {
   int port = -1;
 
@@ -271,13 +246,13 @@ int main(int argc, char **argv) {
 
   int i;
   for (i = 0; i < NUM_THREADS; i++) {
-    pthread_create(&client_serve_threads[i], NULL, worker_thread, NULL);
+    pthread_create(&client_serve_threads[i], NULL, work, NULL);
   }
   for (i = 0; i < NUM_THREADS; i++) {
-    pthread_create(&worker_threads[i], NULL, starter_thread, NULL);
+    pthread_create(&init_threads[i], NULL, init, NULL);
   }
   for (i = 0; i < NUM_THREADS; i++) {
-    pthread_join(worker_threads[i], NULL);
+    pthread_join(init_threads[i], NULL);
   }
   for (i = 0; i < NUM_THREADS; i++) {
     pthread_join(client_serve_threads[i], NULL);
