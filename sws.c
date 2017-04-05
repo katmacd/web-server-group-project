@@ -1,4 +1,3 @@
-
 /*
  * File: sws.c
  * Author: Alex Brodsky
@@ -16,25 +15,26 @@
 #include "network.h"
 #include "priority_queue.h"
 
-#define MAX_HTTP_SIZE 8000            /* size of buffer to allocate */
-#define NUM_THREADS 1
+#define MAX_HTTP_SIZE 8000
+#define NUM_THREADS 5
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-int rr_quantum = 4;
+int rr_quantum = 4000;
 int counter = 0;
 heap_t max_queue;
 heap_t mid_queue;
 heap_t min_queue;
 
-int max_queue_quantum = 4;
-int mid_queue_quantum = 8;
+int max_queue_quantum = 2000;
+int mid_queue_quantum = 4000;
 
 int is_sjf = 0;
 int is_mlfb = 0;
 int is_rr = 0;
 
 pthread_t worker_threads[NUM_THREADS];
-pthread_t client_serve_thread;
+pthread_t client_serve_threads[NUM_THREADS];
+
 char alg_to_use[5];
 
 rcb *create_rcb(FILE *fin, int fd, char *buffer) {
@@ -48,7 +48,6 @@ rcb *create_rcb(FILE *fin, int fd, char *buffer) {
         int len_file = ftell(new_rcb->rcb_serv_handle);
         rewind(new_rcb->rcb_serv_handle);
         if (is_sjf) {
-                rr_quantum = MAX_HTTP_SIZE; //TODO: make this not temporary
                 new_rcb->rcb_quantum = MAX_HTTP_SIZE;
                 new_rcb->rcb_file_bytes_remain = len_file;
                 new_rcb->rcb_priority = len_file;
@@ -83,7 +82,7 @@ void lock_push(rcb *new_rcb, heap_t *queue) {
  * Returns: None
  */
 void init_client(int fd) {
-        char *buffer = malloc(MAX_HTTP_SIZE);                  /* request buffer */
+        char *buffer = malloc(MAX_HTTP_SIZE);
 
         if (!buffer) {               /* error check */
                 perror("Error while allocating memory");
@@ -146,7 +145,7 @@ void *starter_thread(void *data) {
 
 rcb *pop_assign(int len) {
 /* length of data read */
-        rcb *popped_rcb = NULL;
+        rcb *popped_rcb;
         pthread_mutex_lock(&mutex);
         if (max_queue.len > 0) {
                 popped_rcb = pop(&max_queue);
@@ -160,14 +159,12 @@ rcb *pop_assign(int len) {
                 popped_rcb = pop(&min_queue);
                 printf("pooping with priority %d\n", popped_rcb->rcb_priority);
                 len = popped_rcb->rcb_file_bytes_remain;
+        } else {
+                popped_rcb = NULL;
         }
         pthread_mutex_unlock(&mutex);;
         return popped_rcb;
 }
-
-//id serve_client(int len, char *buffer, rcb *popped_rcb) {
-
-//}
 
 void *worker_thread(void *data) {
         char *buffer = malloc(sizeof(char) * MAX_HTTP_SIZE);                  /* request buffer */
@@ -177,14 +174,12 @@ void *worker_thread(void *data) {
                 perror("Error while allocating memory");
                 abort();
         }
-
         int len = -1;
 
         while (1) {
+                //TODO: Fix this busy waiting
                 popped_rcb = pop_assign(len);
                 if (popped_rcb) {
-
-
                         if ((is_mlfb)) {
                                 if (popped_rcb->rcb_file_bytes_remain != 0 && popped_rcb->rcb_queue_level == 0) {
                                         popped_rcb->rcb_queue_level = 1;
@@ -195,11 +190,9 @@ void *worker_thread(void *data) {
                                 }
                         }
 
-
                         do {                        /* loop, read & send file */
                                 len = fread(buffer, 1, popped_rcb->rcb_quantum, popped_rcb->rcb_serv_handle); /* read file chunk */
                                 popped_rcb->rcb_file_bytes_remain = popped_rcb->rcb_file_bytes_remain - len;
-
 
                                 if (len < 0) {     /* check for errors */
                                         perror("Error while writing to client");
@@ -213,25 +206,27 @@ void *worker_thread(void *data) {
                                 }
                         } while (len == MAX_HTTP_SIZE); /* the last chunk < 8192 */
 
-
-
-                        if (!(is_mlfb)) {
-                                if (len == rr_quantum) {
-
+                        if (is_rr) {
+                                if (popped_rcb->rcb_file_bytes_remain > popped_rcb->rcb_quantum) {
                                         lock_push(popped_rcb, &max_queue);
-
-                                }
-                                if (len < rr_quantum) {
+                                } else {
                                         close(popped_rcb->rcb_cli_desc);
                                         fclose(popped_rcb->rcb_serv_handle);
                                         free(popped_rcb);
                                 }
-                        } else {
+                        }
+
+                        if (is_sjf) {
+                                close(popped_rcb->rcb_cli_desc);
+                                fclose(popped_rcb->rcb_serv_handle);
+                                free(popped_rcb);
+                        }
+
+                        if (is_mlfb) {
                                 if (len == max_queue_quantum || len == mid_queue_quantum) {
                                         if (popped_rcb->rcb_queue_level == 1) {
                                                 printf("pushed to mid q");
                                                 lock_push(popped_rcb, &mid_queue);
-
                                         }
                                         if (popped_rcb->rcb_queue_level == 2) {
                                                 printf("pushed to min q");
@@ -243,8 +238,8 @@ void *worker_thread(void *data) {
                                         free(popped_rcb);
                                 }
                         }
+
                 }
-                popped_rcb = NULL;
         }
 }
 
@@ -268,20 +263,30 @@ int main(int argc, char **argv) {
                 return 0;
         }
 
-        is_sjf = !strcmp(alg_to_use, "SJF");
-        is_rr = !strcmp(alg_to_use, "RR");
-        is_mlfb = !strcmp(alg_to_use, "MLFB");
+        if(strcmp(alg_to_use, "SJF") == 0 || strcmp(alg_to_use, "sjf") == 0) {
+                is_sjf = 1;
+        }
+        if(strcmp(alg_to_use, "RR") == 0 || strcmp(alg_to_use, "rr") == 0) {
+                is_rr = 1;
+        }
+        if(strcmp(alg_to_use, "MLFB") == 0 || strcmp(alg_to_use, "mlfb") == 0) {
+                is_mlfb = 1;
+        }
 
         network_init(port);
 
-        pthread_create(&client_serve_thread, NULL, worker_thread, NULL);
         int i;
+        for (i = 0; i < NUM_THREADS; i++) {
+                pthread_create(&client_serve_threads[i], NULL, worker_thread, NULL);
+        }
         for (i = 0; i < NUM_THREADS; i++) {
                 pthread_create(&worker_threads[i], NULL, starter_thread, NULL);
         }
         for (i = 0; i < NUM_THREADS; i++) {
                 pthread_join(worker_threads[i], NULL);
         }
-        pthread_join(client_serve_thread, NULL);
+        for (i = 0; i < NUM_THREADS; i++) {
+                pthread_join(client_serve_threads[i], NULL);
+        }
         return EXIT_SUCCESS;
 }
