@@ -177,6 +177,7 @@ void *worker_thread(void *data) {
   int len = -1;
 
   while (1) {
+    //TODO: Fix this busy waiting
     popped_rcb = pop_assign(len);
     if (popped_rcb) {
       if ((is_mlfb)) {
@@ -188,7 +189,6 @@ void *worker_thread(void *data) {
           popped_rcb->rcb_quantum = MAX_HTTP_SIZE;
         }
       }
-
 
       do {                                          /* loop, read & send file */
         len = fread(buffer, 1, popped_rcb->rcb_quantum, popped_rcb->rcb_serv_handle); /* read file chunk */
@@ -221,7 +221,6 @@ void *worker_thread(void *data) {
         fclose(popped_rcb->rcb_serv_handle);
         free(popped_rcb);
       }
-
 
       if (is_mlfb) {
         if (len == max_queue_quantum || len == mid_queue_quantum) {
