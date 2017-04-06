@@ -6,12 +6,15 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <semaphore.h>
 #include "network.h"
 #include "priority_queue.h"
 
 #define MAX_FILE_LENGTH 255
 #define MAX_HTTP_SIZE 8892
 #define NUM_THREADS 64
+
+
 
 queue max_queue;
 queue mid_queue;
@@ -24,29 +27,28 @@ int is_sjf = 0;
 int is_mlfb = 0;
 int is_rr = 0;
 
+int workToDo = 0;
+
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cond;
+sem_t sem;
 
 char alg_to_use[5];
-
-
 void algorithm_init(int *, int *);
-
 void work_init_t(int *);
-
 void rcb_init_t();
-
 void *init_client(void *);
-
 void *work(void *);
-
 rcb *make_rbc(FILE *, int, char *, char *req);
-
 void lock_enqueue(rcb *, queue *);
-
 rcb *lock_dequeue(int);
 
 /* Accept command line arguments and initialize the server */
 int main(int argc, char **argv) {
+
+  pthread_cond_init( &cond, NULL);
+  sem_init(&sem, 0, 0);
   int port = -1;
   int num_threads = 64;
 
@@ -60,6 +62,7 @@ int main(int argc, char **argv) {
 
   algorithm_init(&port, &num_threads);
   network_init(port);
+  printf("Waiting for client request...\n");
   work_init_t(&num_threads);
   return EXIT_SUCCESS;
 }
@@ -99,7 +102,6 @@ void rcb_init_t() {
   int fd;
 
   for (;;) {
-    printf("Waiting for client request...\n");
     network_wait();
     for (fd = network_open(); fd >= 0; fd = network_open()) {
       pthread_t init_thread;
@@ -115,6 +117,7 @@ void lock_enqueue(rcb *new_rcb, queue *queue) {
   pthread_mutex_lock(&mutex);
   enqueue(queue, new_rcb->rcb_priority, new_rcb);
   pthread_mutex_unlock(&mutex);
+  sem_post(&sem); //increment when enqueue
 }
 
 /* Runner responsible for creating request control blocks
@@ -229,7 +232,8 @@ rcb *lock_dequeue(int len) {
   return popped_rcb;
 }
 
-/* Runner to process request control blocks */
+/* Runner to process request control blocks implemented
+ * with a semaphore to prevent busy waiting*/
 void *work(void *data) {
   char *buffer = malloc(sizeof(char) * MAX_HTTP_SIZE);
   memset(buffer, 0, sizeof(char) * MAX_HTTP_SIZE);
@@ -240,7 +244,7 @@ void *work(void *data) {
   }
   while (1) {
     int len = -1;
-    //TODO: Fix this busy waiting
+    sem_wait(&sem); //wake up when queue has rcbs
     popped_rcb = lock_dequeue(len); //get the next block in schedule
     if (popped_rcb) {
       if ((is_mlfb)) {
