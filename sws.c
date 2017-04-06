@@ -15,278 +15,286 @@
 #include "network.h"
 #include "priority_queue.h"
 
-#define MAX_HTTP_SIZE 8000
-#define NUM_THREADS 5
+#define MAX_FILE_LENGTH 255
+#define MAX_HTTP_SIZE 8892
+#define NUM_THREADS 64
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-int rr_quantum = 4000;
+int rr_quantum = 2048;
 int counter = 0;
-heap_t max_queue;
-heap_t mid_queue;
-heap_t min_queue;
+queue max_queue;
+queue mid_queue;
+queue min_queue;
 
-int max_queue_quantum = 2000;
-int mid_queue_quantum = 4000;
+int max_queue_quantum = 2048;
+int mid_queue_quantum = 4096;
 
 int is_sjf = 0;
 int is_mlfb = 0;
 int is_rr = 0;
 
-pthread_t worker_threads[NUM_THREADS];
-pthread_t client_serve_threads[NUM_THREADS];
 
 char alg_to_use[5];
 
-rcb *create_rcb(FILE *fin, int fd, char *buffer) {
-        rcb *new_rcb = (rcb *) malloc(sizeof(rcb));
-        new_rcb->rcb_queue_level = 0;
-        new_rcb->rcb_seq_num = counter; /* TODO: This may have to be fixed later */
-        new_rcb->rcb_cli_desc = fd;
-        new_rcb->rcb_serv_handle = fin;
-        fseek(new_rcb->rcb_serv_handle, 0, SEEK_END);
+rcb *make_rbc(FILE *, int, char *, char *req);
 
-        int len_file = ftell(new_rcb->rcb_serv_handle);
-        rewind(new_rcb->rcb_serv_handle);
-        if (is_sjf) {
-                new_rcb->rcb_quantum = MAX_HTTP_SIZE;
-                new_rcb->rcb_file_bytes_remain = len_file;
-                new_rcb->rcb_priority = len_file;
-        }
-        if (is_rr) {
-                new_rcb->rcb_quantum = rr_quantum;
-                new_rcb->rcb_file_bytes_remain = len_file;
-                new_rcb->rcb_priority = 1;
-        }
-        if (strcmp(alg_to_use, "MLFB") == 0) {
-                rr_quantum = MAX_HTTP_SIZE; //TODO: make this not temporary
-                new_rcb->rcb_quantum = max_queue_quantum;
-                new_rcb->rcb_file_bytes_remain = len_file;
-                new_rcb->rcb_priority = 1;
-        }
-        return new_rcb;
-}
+void lock_enqueue(rcb *, queue *);
 
-void lock_push(rcb *new_rcb, heap_t *queue) {
-        pthread_mutex_lock(&mutex);
-        printf("pushing with priority %d\n", new_rcb->rcb_priority);
-        push(queue, new_rcb->rcb_priority, new_rcb);
-        pthread_mutex_unlock(&mutex);
-}
+void lock_enqueue(rcb *, queue *);
 
-/* This function takes a file handle to a client, reads in the request,
- *    parses the request, and sends back the requested file.  If the
- *    request is improper or the file is not available, the appropriate
- *    error is sent back.
- * Parameters:
- *             fd : the file descriptor to the client connection
- * Returns: None
- */
-void init_client(int fd) {
-        char *buffer = malloc(MAX_HTTP_SIZE);
+void *init_client(void *);
 
-        if (!buffer) {               /* error check */
-                perror("Error while allocating memory");
-                abort();
-        }
+void rcb_init_t();
 
-        char *req = NULL;                     /* ptr to req file */
-        char *brk;                            /* state used by strtok */
-        char *tmp;                            /* error checking ptr */
-        FILE *fin;                            /* input file handle */
-        int len;                              /* length of data read */
+rcb *lock_dequeue(int);
 
-        if (read(fd, buffer, MAX_HTTP_SIZE) <= 0) { /* read req from client */
-                perror("Error while reading request");
-                abort();
-        }
+void *work(void *);
 
-        /* standard requests are of the form
-         *   GET /foo/bar/qux.html HTTP/1.1
-         * We want the second token (the file path).
-         */
-        tmp = strtok_r(buffer, " ", &brk);  /* parse request */
-        if (tmp && !strcmp("GET", tmp)) {
-                req = strtok_r(NULL, " ", &brk);
-        }
+void algorithm_init(int *, int *);
 
-        if (!req) {                          /* is req valid? */
-                len = sprintf(buffer, "HTTP/1.1 400 Bad request \n\n");
-                write(fd, buffer, len); /* if not, send err */
-                close(fd);
-        } else {                              /* if so, open file */
-                req++;                  /* skip leading / */
+void work_init_t(int *);
 
-                fin = fopen(req, "r"); /* open file */
-
-                if (!fin) {            /* check if successful */
-                        len = sprintf(buffer, "HTTP/1.1 404 File not found \n\n");
-                        write(fd, buffer, len); /* if not, send err */
-                        close(fd);
-                } else {                /* if so, send file */
-                        len = sprintf(buffer, "HTTP/1.1 200 OK\n\n");/* send success code */
-                        write(fd, buffer, len);
-                        rcb *push_rcb = create_rcb(fin, fd, buffer);
-                        lock_push(push_rcb, &max_queue);
-                }
-        }
-        free(buffer);
-}
-
-void *starter_thread(void *data) {
-        int fd;
-        for (;; ) {                         /* main loop */
-                network_wait();         /* wait for clients */
-
-                for (fd = network_open(); fd >= 0; fd = network_open()) { /* get clients */
-                        init_client(fd); /* process each client */
-                }
-        }
-}
-
-rcb *pop_assign(int len) {
-/* length of data read */
-        rcb *popped_rcb;
-        pthread_mutex_lock(&mutex);
-        if (max_queue.len > 0) {
-                popped_rcb = pop(&max_queue);
-                printf("pooping with priority %d\n", popped_rcb->rcb_priority);
-                len = popped_rcb->rcb_file_bytes_remain;
-        } else if (max_queue.len == 0 && mid_queue.len > 0 && is_mlfb) {
-                popped_rcb = pop(&mid_queue);
-                printf("pooping with priority %d\n", popped_rcb->rcb_priority);
-                len = popped_rcb->rcb_file_bytes_remain;
-        } else if (max_queue.len == 0 && mid_queue.len == 0 && min_queue.len > 0 && is_mlfb) {
-                popped_rcb = pop(&min_queue);
-                printf("pooping with priority %d\n", popped_rcb->rcb_priority);
-                len = popped_rcb->rcb_file_bytes_remain;
-        } else {
-                popped_rcb = NULL;
-        }
-        pthread_mutex_unlock(&mutex);;
-        return popped_rcb;
-}
-
-void *worker_thread(void *data) {
-        char *buffer = malloc(sizeof(char) * MAX_HTTP_SIZE);                  /* request buffer */
-        rcb *popped_rcb;
-
-        if (!buffer) {               /* error check */
-                perror("Error while allocating memory");
-                abort();
-        }
-        int len = -1;
-
-        while (1) {
-                //TODO: Fix this busy waiting
-                popped_rcb = pop_assign(len);
-                if (popped_rcb) {
-                        if ((is_mlfb)) {
-                                if (popped_rcb->rcb_file_bytes_remain != 0 && popped_rcb->rcb_queue_level == 0) {
-                                        popped_rcb->rcb_queue_level = 1;
-                                        popped_rcb->rcb_quantum = mid_queue_quantum;
-                                } else if (popped_rcb->rcb_file_bytes_remain != 0 && popped_rcb->rcb_queue_level == 1) {
-                                        popped_rcb->rcb_queue_level = 2;
-                                        popped_rcb->rcb_quantum = MAX_HTTP_SIZE;
-                                }
-                        }
-
-                        do {                        /* loop, read & send file */
-                                len = fread(buffer, 1, popped_rcb->rcb_quantum, popped_rcb->rcb_serv_handle); /* read file chunk */
-                                popped_rcb->rcb_file_bytes_remain = popped_rcb->rcb_file_bytes_remain - len;
-
-                                if (len < 0) {     /* check for errors */
-                                        perror("Error while writing to client");
-                                } else if (len > 0) { /* if none, send chunk */
-
-                                        printf("%s\n", buffer);
-                                        len = write(popped_rcb->rcb_cli_desc, buffer, len);
-                                        if (len < 1) { /* check for errors */
-                                                perror("Error while writing to client");
-                                        }
-                                }
-                        } while (len == MAX_HTTP_SIZE); /* the last chunk < 8192 */
-
-                        if (is_rr) {
-                                if (popped_rcb->rcb_file_bytes_remain > popped_rcb->rcb_quantum) {
-                                        lock_push(popped_rcb, &max_queue);
-                                } else {
-                                        close(popped_rcb->rcb_cli_desc);
-                                        fclose(popped_rcb->rcb_serv_handle);
-                                        free(popped_rcb);
-                                }
-                        }
-
-                        if (is_sjf) {
-                                close(popped_rcb->rcb_cli_desc);
-                                fclose(popped_rcb->rcb_serv_handle);
-                                free(popped_rcb);
-                        }
-
-                        if (is_mlfb) {
-                                if (len == max_queue_quantum || len == mid_queue_quantum) {
-                                        if (popped_rcb->rcb_queue_level == 1) {
-                                                printf("pushed to mid q");
-                                                lock_push(popped_rcb, &mid_queue);
-                                        }
-                                        if (popped_rcb->rcb_queue_level == 2) {
-                                                printf("pushed to min q");
-                                                lock_push(popped_rcb, &min_queue);
-                                        }
-                                } else if (len < rr_quantum) {
-                                        close(popped_rcb->rcb_cli_desc);
-                                        fclose(popped_rcb->rcb_serv_handle);
-                                        free(popped_rcb);
-                                }
-                        }
-
-                }
-        }
-}
-
-/* This function is where the program starts running.
- *    The function first parses its command line parameters to determine port #
- *    Then, it initializes, the network and enters the main loop.
- *    The main loop waits for a client (1 or more to connect, and then processes
- *    all clients by calling the seve_client() function for each one.
- * Parameters:
- *             argc : number of command line parameters (including program name
- *             argv : array of pointers to command line parameters
- * Returns: an integer status code, 0 for success, something else for error.
- */
 int main(int argc, char **argv) {
-        int port = -1;
+  int port = -1;
+  int num_threads = 64;
 
-        if ((argc < 3)
-            || (sscanf(argv[1], "%d", &port) < 1)
-            || *(strcpy(alg_to_use, argv[2])) < 1) {
-                printf("usage: sws <port> <algorithm>\n");
-                return 0;
-        }
+  if ((argc < 4)
+      || (sscanf(argv[1], "%d", &port) < 1)
+      || *(strcpy(alg_to_use, argv[2])) < 1
+      || sscanf(argv[3], "%d", &num_threads) < 1) {
+    printf("usage: sws <port> <algorithm> <thread number>\n");
+    return 0;
+  }
 
-        if(strcmp(alg_to_use, "SJF") == 0 || strcmp(alg_to_use, "sjf") == 0) {
-                is_sjf = 1;
-        }
-        if(strcmp(alg_to_use, "RR") == 0 || strcmp(alg_to_use, "rr") == 0) {
-                is_rr = 1;
-        }
-        if(strcmp(alg_to_use, "MLFB") == 0 || strcmp(alg_to_use, "mlfb") == 0) {
-                is_mlfb = 1;
-        }
+  algorithm_init(&port, &num_threads);
+  network_init(port);
+  work_init_t(&num_threads);
+  return EXIT_SUCCESS;
+}
 
-        network_init(port);
+void work_init_t(int *num_threads) {
+  int i;
+  pthread_t client_serve_threads[*num_threads];
+  for (i = 0; i < *num_threads; i++) {
+    pthread_create(&client_serve_threads[i], NULL, work, NULL);
+  }
+  rcb_init_t();
+  for (i = 0; i < *num_threads; i++) {
+    pthread_join(client_serve_threads[i], NULL);
+  }
+}
 
-        int i;
-        for (i = 0; i < NUM_THREADS; i++) {
-                pthread_create(&client_serve_threads[i], NULL, worker_thread, NULL);
+void algorithm_init(int *port, int *num_threads) {
+  is_sjf = !(strcmp(alg_to_use, "SJF") && strcmp(alg_to_use, "sjf"));
+  is_rr = !(strcmp(alg_to_use, "RR") && strcmp(alg_to_use, "rr"));
+  is_mlfb = !(strcmp(alg_to_use, "MLFB") && strcmp(alg_to_use, "mlfb"));
+
+  if (is_sjf) printf("Using shortest job first scheduling algorithm ");
+  else if (is_rr) printf("Using round robin scheduling algorithm ");
+  else if (is_mlfb) printf("Using multilevel feedback scheduling algorithm ");
+  else {
+    printf("Not using a valid scheduling algorithm. Goodbye!\n");
+    abort();
+  }
+  printf("with %d threads on port %d\n", *num_threads, *port);
+
+}
+
+rcb *make_rbc(FILE *fin, int fd, char *buffer, char *req) {
+  rcb *new_rcb = (rcb *) malloc(sizeof(rcb));
+  new_rcb->rcb_queue_level = 0;
+  new_rcb->rcb_seq_num = counter; /* TODO: This may have to be fixed later */
+  new_rcb->rcb_cli_desc = fd;
+  new_rcb->rcb_file_name = req;
+  new_rcb->rcb_serv_handle = fin;
+  fseek(new_rcb->rcb_serv_handle, 0, SEEK_END);
+
+  int len = ftell(new_rcb->rcb_serv_handle);
+  rewind(new_rcb->rcb_serv_handle);
+  if (is_sjf) {
+    new_rcb->rcb_quantum = MAX_HTTP_SIZE;
+    new_rcb->rcb_file_bytes_remain = len;
+    new_rcb->rcb_priority = len;
+  }
+  if (is_rr) {
+    new_rcb->rcb_quantum = rr_quantum;
+    new_rcb->rcb_file_bytes_remain = len;
+    new_rcb->rcb_priority = 1;
+  }
+  if (is_mlfb) {
+    rr_quantum = MAX_HTTP_SIZE; //TODO: make this not temporary
+    new_rcb->rcb_quantum = max_queue_quantum;
+    new_rcb->rcb_file_bytes_remain = len;
+    new_rcb->rcb_priority = 1;
+  }
+  return new_rcb;
+}
+
+void lock_enqueue(rcb *new_rcb, queue *queue) {
+  pthread_mutex_lock(&mutex);
+  enqueue(queue, new_rcb->rcb_priority, new_rcb);
+  pthread_mutex_unlock(&mutex);
+}
+
+/* standard requests are of the form GET /foo/bar/qux.html HTTP/1.1 */
+void *init_client(void *data) {
+  int *fdp = (int *) data;
+  int fd = *fdp;
+
+  char *buffer = malloc(sizeof(char) * MAX_HTTP_SIZE);
+  memset(buffer, 0, sizeof(char) * MAX_HTTP_SIZE);
+
+  if (!buffer) {
+    perror("Error while allocating memory");
+    abort();
+  }
+
+  char *req = NULL;
+  char *brk;
+  char *tmp;
+  FILE *fin;
+  int len;
+
+  if (read(fd, buffer, MAX_HTTP_SIZE) <= 0) {
+    perror("Error while reading request");
+    abort();
+  }
+
+  tmp = strtok_r(buffer, " ", &brk);
+  if (tmp && !strcmp("GET", tmp)) {
+    req = strtok_r(NULL, " ", &brk);
+  }
+
+  if (!req) {
+    len = sprintf(buffer, "HTTP/1.1 400 Bad request \n\n");
+    write(fd, buffer, len);
+    close(fd);
+  } else {
+    req++;
+    printf("Request for file '%s' admitted.\n", req);
+    fin = fopen(req, "r");
+    char request[MAX_FILE_LENGTH];
+    memset(request, '\0', sizeof(request));
+    strcpy(request, req);
+
+    if (!fin) {
+      len = sprintf(buffer, "HTTP/1.1 404 File not found \n\n");
+      write(fd, buffer, len);
+      close(fd);
+    } else {
+      len = sprintf(buffer, "HTTP/1.1 200 OK\n\n");
+      write(fd, buffer, len);
+      rcb *push_rcb = make_rbc(fin, fd, buffer, request);
+      lock_enqueue(push_rcb, &max_queue);
+    }
+  }
+  free(buffer);
+  return 0;
+}
+
+void rcb_init_t() {
+  int fd;
+
+  for (;;) {
+    printf("Waiting for client request...\n");
+    network_wait();
+    for (fd = network_open(); fd >= 0; fd = network_open()) {
+      pthread_t init_thread;
+      int *fdp = (int *) malloc(sizeof(int));
+      *fdp = fd;
+      pthread_create(&init_thread, NULL, init_client, fdp);
+    }
+  }
+}
+
+rcb *lock_dequeue(int len) {
+  rcb *popped_rcb;
+  pthread_mutex_lock(&mutex);
+  if (max_queue.len > 0) {
+    popped_rcb = dequeue(&max_queue);
+    len = popped_rcb->rcb_file_bytes_remain;
+  } else if (max_queue.len == 0 && mid_queue.len > 0) {
+    popped_rcb = dequeue(&mid_queue);
+    len = popped_rcb->rcb_file_bytes_remain;
+  } else if (max_queue.len == 0 && mid_queue.len == 0 && min_queue.len > 0) {
+    popped_rcb = dequeue(&min_queue);
+    len = popped_rcb->rcb_file_bytes_remain;
+  } else {
+    popped_rcb = NULL;
+  }
+  pthread_mutex_unlock(&mutex);;
+  return popped_rcb;
+}
+
+void *work(void *data) {
+  char *buffer = malloc(sizeof(char) * MAX_HTTP_SIZE);
+  memset(buffer, 0, sizeof(char) * MAX_HTTP_SIZE);
+  rcb *popped_rcb;
+  if (!buffer) {
+    perror("Error while allocating memory");
+    abort();
+  }
+  while (1) {
+    int len = -1;
+    //TODO: Fix this busy waiting
+    popped_rcb = lock_dequeue(len);
+    if (popped_rcb) {
+      if ((is_mlfb)) {
+        if (popped_rcb->rcb_queue_level == 0) {
+          popped_rcb->rcb_queue_level = 1;
+        } else if (popped_rcb->rcb_queue_level == 1) {
+          popped_rcb->rcb_queue_level = 2;
         }
-        for (i = 0; i < NUM_THREADS; i++) {
-                pthread_create(&worker_threads[i], NULL, starter_thread, NULL);
+      }
+
+      do {
+        len = fread(buffer, 1, popped_rcb->rcb_quantum, popped_rcb->rcb_serv_handle); /* read file chunk */
+        popped_rcb->rcb_file_bytes_remain = popped_rcb->rcb_file_bytes_remain - len;
+        if (len < 0) {
+          perror("Error while writing to client");
+        } else if (len > 0) {
+          /* send chunk */
+          printf("Sent %d bytes of file '%s'\n",
+                 len, popped_rcb->rcb_file_name);
+          len = write(popped_rcb->rcb_cli_desc, buffer, len);
+          if (len < 1) {
+            perror("Error while writing to client");
+          }
         }
-        for (i = 0; i < NUM_THREADS; i++) {
-                pthread_join(worker_threads[i], NULL);
+      } while (len == MAX_HTTP_SIZE);
+
+      if (is_rr) {
+        if (popped_rcb->rcb_file_bytes_remain > popped_rcb->rcb_quantum) {
+          lock_enqueue(popped_rcb, &max_queue);
+        } else {
+          close(popped_rcb->rcb_cli_desc);
+          fclose(popped_rcb->rcb_serv_handle);
+          printf("Request for file '%s' completed.\n", popped_rcb->rcb_file_name);
+          free(popped_rcb);
         }
-        for (i = 0; i < NUM_THREADS; i++) {
-                pthread_join(client_serve_threads[i], NULL);
+      } else if (is_sjf) {
+        printf("Request for file '%s' completed.\n", popped_rcb->rcb_file_name);
+        fflush(stdout);
+        close(popped_rcb->rcb_cli_desc);
+        fclose(popped_rcb->rcb_serv_handle);
+        free(popped_rcb);
+      } else if (is_mlfb) {
+        if (len == max_queue_quantum || len == mid_queue_quantum) {
+          if (popped_rcb->rcb_queue_level == 1) {
+            popped_rcb->rcb_quantum = mid_queue_quantum;
+            lock_enqueue(popped_rcb, &mid_queue);
+          } else if (popped_rcb->rcb_queue_level == 2) {
+            popped_rcb->rcb_quantum = MAX_HTTP_SIZE;
+            lock_enqueue(popped_rcb, &min_queue);
+          }
+        } else if (len < popped_rcb->rcb_quantum) {
+          printf("Request for file '%s' completed.\n", popped_rcb->rcb_file_name);
+          fflush(stdout);
+          close(popped_rcb->rcb_cli_desc);
+          fclose(popped_rcb->rcb_serv_handle);
+          free(popped_rcb);
         }
-        return EXIT_SUCCESS;
+      }
+    }
+  }
 }
