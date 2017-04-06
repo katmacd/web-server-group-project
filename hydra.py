@@ -107,7 +107,7 @@ class RequestHead(threading.Thread):
       completed.put( self.seq )
       result = result + resp
       req_time = time.time() - req_time
-#      print "\n\n" + result + "\n"
+      print "\n\n" + result + "\n"
       sock.close()
     except:
       print "Socket failure"
