@@ -8,22 +8,22 @@ typedef struct {
   int rcb_quantum;
   int rcb_priority;
   int rcb_queue_level;
+  char* rcb_file_name;
 } rcb;
 
 typedef struct {
   int priority;
   rcb *data;
-} node_t;
+} node;
 
 typedef struct {
-  node_t *nodes;
+  node *nodes;
   int len;
   int size;
-} heap_t;
+} queue;
 
-void push(heap_t *, int, rcb *);
-
-rcb *pop(heap_t *);
+void enqueue(queue *, int, rcb *);
+rcb *dequeue(queue *);
 
 #define PRIORITY_QUEUE_H
 
