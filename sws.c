@@ -6,7 +6,7 @@
 #include "network.h"
 #include "priority_queue.h"
 
-#define MAX_HTTP_SIZE 80 //8892
+#define MAX_HTTP_SIZE 8892
 #define NUM_THREADS 64
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -195,23 +195,23 @@ void *work(void *data) {
         }
       }
 
-      if (is_sjf) {
+      else if (is_sjf) {
         close(popped_rcb->rcb_cli_desc);
         fclose(popped_rcb->rcb_serv_handle);
         free(popped_rcb);
       }
 
-      if (is_mlfb) {
+      else if (is_mlfb) {
         if (len == max_queue_quantum || len == mid_queue_quantum) {
           if (popped_rcb->rcb_queue_level == 1) {
             popped_rcb->rcb_quantum = mid_queue_quantum;
             lock_push(popped_rcb, &mid_queue);
           }
-          if (popped_rcb->rcb_queue_level == 2) {
+          else if (popped_rcb->rcb_queue_level == 2) {
             popped_rcb->rcb_quantum = MAX_HTTP_SIZE;
             lock_push(popped_rcb, &min_queue);
           }
-        } else if (len < rr_quantum) {
+        } else if (len < popped_rcb->rcb_quantum) {
           close(popped_rcb->rcb_cli_desc);
           fclose(popped_rcb->rcb_serv_handle);
           free(popped_rcb);
