@@ -28,6 +28,55 @@ pthread_t client_serve_threads[NUM_THREADS];
 
 char alg_to_use[5];
 
+rcb *create_rcb(FILE *, int, char *);
+
+void lock_push(rcb *, heap_t *);
+
+void lock_push(rcb *, heap_t *);
+
+void *init_client(void *);
+
+void init();
+
+rcb *pop_assign(int);
+
+void *work(void *);
+
+int main(int argc, char **argv) {
+  int port = -1;
+
+  if ((argc < 3)
+      || (sscanf(argv[1], "%d", &port) < 1)
+      || *(strcpy(alg_to_use, argv[2])) < 1) {
+    printf("usage: sws <port> <algorithm>\n");
+    return 0;
+  }
+
+  is_sjf = !(strcmp(alg_to_use, "SJF") && strcmp(alg_to_use, "sjf"));
+  is_rr = !(strcmp(alg_to_use, "RR") && strcmp(alg_to_use, "rr"));
+  is_mlfb = !(strcmp(alg_to_use, "MLFB") && strcmp(alg_to_use, "mlfb"));
+
+  if (is_sjf) printf("Using shortest job first scheduling algorithm.\n");
+  else if (is_rr) printf("Using round robin scheduling algorithm.\n");
+  else if (is_mlfb) printf("Using multilevel feedback scheduling algorithm.\n");
+  else {
+    printf("Not using a valid scheduling algorithm. Goodbye!\n");
+    abort();
+  }
+  network_init(port);
+
+  int i;
+  for (i = 0; i < NUM_THREADS; i++) {
+    pthread_create(&client_serve_threads[i], NULL, work, NULL);
+  }
+  init();
+
+  for (i = 0; i < NUM_THREADS; i++) {
+    pthread_join(client_serve_threads[i], NULL);
+  }
+  return EXIT_SUCCESS;
+}
+
 rcb *create_rcb(FILE *fin, int fd, char *buffer) {
   rcb *new_rcb = (rcb *) malloc(sizeof(rcb));
   new_rcb->rcb_queue_level = 0;
@@ -123,7 +172,7 @@ void init() {
     network_wait();
     for (fd = network_open(); fd >= 0; fd = network_open()) {
       pthread_t init_thread;
-      int* fdp = (int*)malloc(sizeof(int));
+      int *fdp = (int *) malloc(sizeof(int));
       *fdp = fd;
       pthread_create(&init_thread, NULL, init_client, fdp);
     }
@@ -193,21 +242,16 @@ void *work(void *data) {
           fclose(popped_rcb->rcb_serv_handle);
           free(popped_rcb);
         }
-      }
-
-      else if (is_sjf) {
+      } else if (is_sjf) {
         close(popped_rcb->rcb_cli_desc);
         fclose(popped_rcb->rcb_serv_handle);
         free(popped_rcb);
-      }
-
-      else if (is_mlfb) {
+      } else if (is_mlfb) {
         if (len == max_queue_quantum || len == mid_queue_quantum) {
           if (popped_rcb->rcb_queue_level == 1) {
             popped_rcb->rcb_quantum = mid_queue_quantum;
             lock_push(popped_rcb, &mid_queue);
-          }
-          else if (popped_rcb->rcb_queue_level == 2) {
+          } else if (popped_rcb->rcb_queue_level == 2) {
             popped_rcb->rcb_quantum = MAX_HTTP_SIZE;
             lock_push(popped_rcb, &min_queue);
           }
@@ -220,39 +264,4 @@ void *work(void *data) {
 
     }
   }
-}
-
-int main(int argc, char **argv) {
-  int port = -1;
-
-  if ((argc < 3)
-      || (sscanf(argv[1], "%d", &port) < 1)
-      || *(strcpy(alg_to_use, argv[2])) < 1) {
-    printf("usage: sws <port> <algorithm>\n");
-    return 0;
-  }
-
-  is_sjf = !(strcmp(alg_to_use, "SJF") && strcmp(alg_to_use, "sjf"));
-  is_rr = !(strcmp(alg_to_use, "RR") && strcmp(alg_to_use, "rr"));
-  is_mlfb = !(strcmp(alg_to_use, "MLFB") && strcmp(alg_to_use, "mlfb"));
-
-  if (is_sjf) printf("Using shortest job first scheduling algorithm.\n");
-  else if (is_rr) printf("Using round robin scheduling algorithm.\n");
-  else if (is_mlfb) printf("Using multilevel feedback scheduling algorithm.\n");
-  else {
-    printf("Not using a valid scheduling algorithm. Goodbye!\n");
-    abort();
-  }
-  network_init(port);
-
-  int i;
-  for (i = 0; i < NUM_THREADS; i++) {
-    pthread_create(&client_serve_threads[i], NULL, work, NULL);
-  }
-  init();
-
-  for (i = 0; i < NUM_THREADS; i++) {
-    pthread_join(client_serve_threads[i], NULL);
-  }
-  return EXIT_SUCCESS;
 }
