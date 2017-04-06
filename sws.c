@@ -1,12 +1,6 @@
-/*
- * File: sws.c
- * Author: Alex Brodsky
- * Purpose: This file contains the implementation of a simple web server.
- *          It consists of two functions: main() which contains the main
- *          loop accept client connections, and init_client(), which
- *          processes each client request.
- */
-
+/* This server creates request control blocks from the client request.
+ * The request control block contains pointers to the file and the client
+ * file descriptor. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,41 +13,39 @@
 #define MAX_HTTP_SIZE 8892
 #define NUM_THREADS 64
 
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-int rr_quantum = 2048;
-int counter = 0;
 queue max_queue;
 queue mid_queue;
 queue min_queue;
-
 int max_queue_quantum = 2048;
 int mid_queue_quantum = 4096;
-
+int rr_quantum = 2048;
+int counter = 0;
 int is_sjf = 0;
 int is_mlfb = 0;
 int is_rr = 0;
 
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 char alg_to_use[5];
 
-rcb *make_rbc(FILE *, int, char *, char *req);
-
-void lock_enqueue(rcb *, queue *);
-
-void lock_enqueue(rcb *, queue *);
-
-void *init_client(void *);
-
-void rcb_init_t();
-
-rcb *lock_dequeue(int);
-
-void *work(void *);
 
 void algorithm_init(int *, int *);
 
 void work_init_t(int *);
 
+void rcb_init_t();
+
+void *init_client(void *);
+
+void *work(void *);
+
+rcb *make_rbc(FILE *, int, char *, char *req);
+
+void lock_enqueue(rcb *, queue *);
+
+rcb *lock_dequeue(int);
+
+/* Accept command line arguments and initialize the server */
 int main(int argc, char **argv) {
         int port = -1;
         int num_threads = 64;
@@ -72,18 +64,7 @@ int main(int argc, char **argv) {
         return EXIT_SUCCESS;
 }
 
-void work_init_t(int *num_threads) {
-        int i;
-        pthread_t client_serve_threads[*num_threads];
-        for (i = 0; i < *num_threads; i++) {
-                pthread_create(&client_serve_threads[i], NULL, work, NULL);
-        }
-        rcb_init_t();
-        for (i = 0; i < *num_threads; i++) {
-                pthread_join(client_serve_threads[i], NULL);
-        }
-}
-
+/* Give information on selected algorithm */
 void algorithm_init(int *port, int *num_threads) {
         is_sjf = !(strcmp(alg_to_use, "SJF") && strcmp(alg_to_use, "sjf"));
         is_rr = !(strcmp(alg_to_use, "RR") && strcmp(alg_to_use, "rr"));
@@ -100,43 +81,45 @@ void algorithm_init(int *port, int *num_threads) {
 
 }
 
-rcb *make_rbc(FILE *fin, int fd, char *buffer, char *req) {
-        rcb *new_rcb = (rcb *) malloc(sizeof(rcb));
-        new_rcb->rcb_queue_level = 0;
-        new_rcb->rcb_seq_num = counter; /* TODO: This may have to be fixed later */
-        new_rcb->rcb_cli_desc = fd;
-        new_rcb->rcb_file_name = req;
-        new_rcb->rcb_serv_handle = fin;
-        fseek(new_rcb->rcb_serv_handle, 0, SEEK_END);
-
-        int len = ftell(new_rcb->rcb_serv_handle);
-        rewind(new_rcb->rcb_serv_handle);
-        if (is_sjf) {
-                new_rcb->rcb_quantum = MAX_HTTP_SIZE;
-                new_rcb->rcb_file_bytes_remain = len;
-                new_rcb->rcb_priority = len;
+/* Initialize the worker threads */
+void work_init_t(int *num_threads) {
+        int i;
+        pthread_t client_serve_threads[*num_threads];
+        for (i = 0; i < *num_threads; i++) {
+                pthread_create(&client_serve_threads[i], NULL, work, NULL);
         }
-        if (is_rr) {
-                new_rcb->rcb_quantum = rr_quantum;
-                new_rcb->rcb_file_bytes_remain = len;
-                new_rcb->rcb_priority = 1;
+        rcb_init_t();
+        for (i = 0; i < *num_threads; i++) {
+                pthread_join(client_serve_threads[i], NULL);
         }
-        if (is_mlfb) {
-                rr_quantum = MAX_HTTP_SIZE; //TODO: make this not temporary
-                new_rcb->rcb_quantum = max_queue_quantum;
-                new_rcb->rcb_file_bytes_remain = len;
-                new_rcb->rcb_priority = 1;
-        }
-        return new_rcb;
 }
 
+/* Initialize request control block creation threads */
+void rcb_init_t() {
+        int fd;
+
+         for (;; ) {
+                printf("Waiting for client request...\n");
+                network_wait();
+                for (fd = network_open(); fd >= 0; fd = network_open()) {
+                        pthread_t init_thread;
+                        int *fdp = (int *) malloc(sizeof(int));
+                        *fdp = fd;
+                        pthread_create(&init_thread, NULL, init_client, fdp);
+                }
+        }
+}
+
+/* Thread safe access to queue */
 void lock_enqueue(rcb *new_rcb, queue *queue) {
         pthread_mutex_lock(&mutex);
         enqueue(queue, new_rcb->rcb_priority, new_rcb);
         pthread_mutex_unlock(&mutex);
 }
 
-/* standard requests are of the form GET /foo/bar/qux.html HTTP/1.1 */
+/* Runner responsible for creating request control blocks
+ * for the passed file descriptor. The buffer is local to
+ * threads to avoid race conditions. */
 void *init_client(void *data) {
         int *fdp = (int *) data;
         int fd = *fdp;
@@ -181,7 +164,7 @@ void *init_client(void *data) {
                         len = sprintf(buffer, "HTTP/1.1 404 File not found \n\n");
                         write(fd, buffer, len);
                         close(fd);
-                } else {
+                } else { // OK so we schedule the rcb;
                         len = sprintf(buffer, "HTTP/1.1 200 OK\n\n");
                         write(fd, buffer, len);
                         rcb *push_rcb = make_rbc(fin, fd, buffer, request);
@@ -192,21 +175,41 @@ void *init_client(void *data) {
         return 0;
 }
 
-void rcb_init_t() {
-        int fd;
+/* Request control block creation - slight differences in
+ * initialization for scheduling algorithm selection
+ * The buffer is local to threads to avoid race conditions. */
 
-        for (;; ) {
-                printf("Waiting for client request...\n");
-                network_wait();
-                for (fd = network_open(); fd >= 0; fd = network_open()) {
-                        pthread_t init_thread;
-                        int *fdp = (int *) malloc(sizeof(int));
-                        *fdp = fd;
-                        pthread_create(&init_thread, NULL, init_client, fdp);
-                }
+rcb *make_rbc(FILE *fin, int fd, char *buffer, char *req) {
+        rcb *new_rcb = (rcb *) malloc(sizeof(rcb));
+        new_rcb->rcb_queue_level = 0;
+        new_rcb->rcb_seq_num = counter;
+        new_rcb->rcb_cli_desc = fd;
+        new_rcb->rcb_file_name = req;
+        new_rcb->rcb_serv_handle = fin;
+        fseek(new_rcb->rcb_serv_handle, 0, SEEK_END);
+        int len = ftell(new_rcb->rcb_serv_handle); //get file size
+        rewind(new_rcb->rcb_serv_handle);
+        if (is_sjf) {
+                new_rcb->rcb_quantum = MAX_HTTP_SIZE;
+                new_rcb->rcb_file_bytes_remain = len;
+                new_rcb->rcb_priority = len;
         }
+        if (is_rr) {
+                new_rcb->rcb_quantum = rr_quantum;
+                new_rcb->rcb_file_bytes_remain = len;
+                new_rcb->rcb_priority = 1;
+        }
+        if (is_mlfb) {
+                rr_quantum = MAX_HTTP_SIZE; //TODO: make this not temporary
+                new_rcb->rcb_quantum = max_queue_quantum;
+                new_rcb->rcb_file_bytes_remain = len;
+                new_rcb->rcb_priority = 1;
+        }
+        return new_rcb;
 }
 
+/* Thread safe access to queue
+ * initialization for scheduling algorithm selection */
 rcb *lock_dequeue(int len) {
         rcb *popped_rcb;
         pthread_mutex_lock(&mutex);
@@ -226,6 +229,7 @@ rcb *lock_dequeue(int len) {
         return popped_rcb;
 }
 
+/* Runner to process request control blocks */
 void *work(void *data) {
         char *buffer = malloc(sizeof(char) * MAX_HTTP_SIZE);
         memset(buffer, 0, sizeof(char) * MAX_HTTP_SIZE);
@@ -237,7 +241,7 @@ void *work(void *data) {
         while (1) {
                 int len = -1;
                 //TODO: Fix this busy waiting
-                popped_rcb = lock_dequeue(len);
+                popped_rcb = lock_dequeue(len); //get the next block in schedule
                 if (popped_rcb) {
                         if ((is_mlfb)) {
                                 if (popped_rcb->rcb_queue_level == 0) {
@@ -246,14 +250,12 @@ void *work(void *data) {
                                         popped_rcb->rcb_queue_level = 2;
                                 }
                         }
-
                         do {
-                                len = fread(buffer, 1, popped_rcb->rcb_quantum, popped_rcb->rcb_serv_handle); /* read file chunk */
+                                len = fread(buffer, 1, popped_rcb->rcb_quantum, popped_rcb->rcb_serv_handle);
                                 popped_rcb->rcb_file_bytes_remain = popped_rcb->rcb_file_bytes_remain - len;
                                 if (len < 0) {
                                         perror("Error while writing to client");
                                 } else if (len > 0) {
-                                        /* send chunk */
                                         printf("Sent %d bytes of file '%s'\n",
                                                len, popped_rcb->rcb_file_name);
                                         len = write(popped_rcb->rcb_cli_desc, buffer, len);
@@ -261,9 +263,9 @@ void *work(void *data) {
                                                 perror("Error while writing to client");
                                         }
                                 }
-                        } while (len == MAX_HTTP_SIZE);
+                        } while (len == MAX_HTTP_SIZE); // write to client in chunks
 
-                        if (is_rr) {
+                        if (is_rr) { // enqueue for quantum unless last block
                                 if (popped_rcb->rcb_file_bytes_remain > popped_rcb->rcb_quantum) {
                                         lock_enqueue(popped_rcb, &max_queue);
                                 } else {
@@ -272,13 +274,13 @@ void *work(void *data) {
                                         printf("Request for file '%s' completed.\n", popped_rcb->rcb_file_name);
                                         free(popped_rcb);
                                 }
-                        } else if (is_sjf) {
+                        } else if (is_sjf) { // never returned to the queue
                                 printf("Request for file '%s' completed.\n", popped_rcb->rcb_file_name);
                                 fflush(stdout);
                                 close(popped_rcb->rcb_cli_desc);
                                 fclose(popped_rcb->rcb_serv_handle);
                                 free(popped_rcb);
-                        } else if (is_mlfb) {
+                        } else if (is_mlfb) { // adjusts values before returning to one of the queues
                                 if (len == max_queue_quantum || len == mid_queue_quantum) {
                                         if (popped_rcb->rcb_queue_level == 1) {
                                                 popped_rcb->rcb_quantum = mid_queue_quantum;
@@ -287,7 +289,7 @@ void *work(void *data) {
                                                 popped_rcb->rcb_quantum = MAX_HTTP_SIZE;
                                                 lock_enqueue(popped_rcb, &min_queue);
                                         }
-                                } else if (len < popped_rcb->rcb_quantum) {
+                                } else if (len < popped_rcb->rcb_quantum) { // unless last block
                                         printf("Request for file '%s' completed.\n", popped_rcb->rcb_file_name);
                                         fflush(stdout);
                                         close(popped_rcb->rcb_cli_desc);
