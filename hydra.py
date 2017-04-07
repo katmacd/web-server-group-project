@@ -73,6 +73,7 @@ class DeadMan(threading.Thread):
 
 
 class RequestHead(threading.Thread):
+<<<<<<< HEAD
 
     def __init__(self, delay, pause, file):
         global num
@@ -133,6 +134,68 @@ class RequestHead(threading.Thread):
         finished = finished + 1
 
 
+=======
+  def __init__(self, delay, pause, file):
+    global num
+    threading.Thread.__init__(self)
+
+    self.delay = delay
+    self.pause = pause
+    self.file = file
+    num = num + 1
+    self.seq = num
+
+  def run(self):
+    global finished
+
+    if self.delay > 0:
+      time.sleep( self.delay )
+
+    sock = socket.socket();
+    try: 
+      sock.connect( ("localhost", port) );
+    except:
+      print "Unable to connect"
+      finished = finished + 1
+      return
+
+    if self.pause > 0:
+      time.sleep( self.pause )
+
+    try: 
+      req = "GET /" + self.file + " HTTP/1.1\nHost: localhost\n\n" 
+      req_time = time.time()
+      sock.sendall( req )
+      sock.shutdown( socket.SHUT_WR )
+
+      result = ""
+      resp = sock.recv( 8192 )
+      while len( resp ) > 0:
+        result = result + resp
+        resp = sock.recv( 8192 )
+      completed.put( self.seq )
+      result = result + resp
+      req_time = time.time() - req_time
+
+      sock.close()
+    except:
+      print "Socket failure"
+      finished = finished + 1
+      return
+
+    while finished != self.seq:
+      time.sleep( 0.01 )
+    print "Thread " + str( self.seq ) + \
+          " ============================================"
+    if dotime:
+      print "{:10.7f}".format( req_time ) + " seconds"
+    else:
+      print result
+
+    finished = finished + 1
+
+      
+>>>>>>> 556474354c76cf45df26dd32daf5536dc342eb1c
 try:
     for line in sys.stdin.readlines():
         req = string.split(string.strip(line), " ")
