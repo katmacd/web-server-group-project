@@ -30,8 +30,6 @@ int is_rr = 0;
 int workToDo = 0;
 
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t cond;
 sem_t sem;
 
 char alg_to_use[5];
@@ -47,7 +45,6 @@ rcb *lock_dequeue(int);
 /* Accept command line arguments and initialize the server */
 int main(int argc, char **argv) {
 
-  pthread_cond_init( &cond, NULL);
   sem_init(&sem, 0, 0);
   int port = -1;
   int num_threads = 64;
@@ -181,7 +178,6 @@ void *init_client(void *data) {
 /* Request control block creation - slight differences in
  * initialization for scheduling algorithm selection
  * The buffer is local to threads to avoid race conditions. */
-
 rcb *make_rbc(FILE *fin, int fd, char *buffer, char *req) {
   rcb *new_rcb = (rcb *) malloc(sizeof(rcb));
   new_rcb->rcb_queue_level = 0;
@@ -244,7 +240,7 @@ void *work(void *data) {
   }
   while (1) {
     int len = -1;
-    sem_wait(&sem); //wake up when queue has rcbs
+    sem_wait(&sem);//wake up when queue has rcbs
     popped_rcb = lock_dequeue(len); //get the next block in schedule
     if (popped_rcb) {
       if ((is_mlfb)) {
