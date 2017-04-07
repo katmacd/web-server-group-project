@@ -6,12 +6,14 @@
 #include <string.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <semaphore.h>
 #include "network.h"
 #include "priority_queue.h"
 
 #define MAX_FILE_LENGTH 255
 #define MAX_HTTP_SIZE 8892
 #define NUM_THREADS 64
+
 
 queue max_queue;
 queue mid_queue;
@@ -24,60 +26,60 @@ int is_sjf = 0;
 int is_mlfb = 0;
 int is_rr = 0;
 
+int workToDo = 0;
+
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t mutex2 = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cond;
+sem_t sem;
 
 char alg_to_use[5];
-
-
 void algorithm_init(int *, int *);
-
 void work_init_t(int *);
-
 void rcb_init_t();
-
 void *init_client(void *);
-
 void *work(void *);
-
 rcb *make_rbc(FILE *, int, char *, char *req);
-
 void lock_enqueue(rcb *, queue *);
-
 rcb *lock_dequeue(int);
 
 /* Accept command line arguments and initialize the server */
 int main(int argc, char **argv) {
-        int port = -1;
-        int num_threads = 64;
 
-        if ((argc < 4)
-            || (sscanf(argv[1], "%d", &port) < 1)
-            || *(strcpy(alg_to_use, argv[2])) < 1
-            || sscanf(argv[3], "%d", &num_threads) < 1) {
-                printf("usage: sws <port> <algorithm> <thread number>\n");
-                return 0;
-        }
+  pthread_cond_init( &cond, NULL);
+  sem_init(&sem, 0, 0);
+  int port = -1;
+  int num_threads = 64;
 
-        algorithm_init(&port, &num_threads);
-        network_init(port);
-        work_init_t(&num_threads);
-        return EXIT_SUCCESS;
+  if ((argc < 4)
+      || (sscanf(argv[1], "%d", &port) < 1)
+      || *(strcpy(alg_to_use, argv[2])) < 1
+      || sscanf(argv[3], "%d", &num_threads) < 1) {
+    printf("usage: sws <port> <algorithm> <thread number>\n");
+    return 0;
+  }
+
+  algorithm_init(&port, &num_threads);
+  network_init(port);
+  printf("Waiting for client request...\n");
+  work_init_t(&num_threads);
+  return EXIT_SUCCESS;
 }
 
 /* Give information on selected algorithm */
 void algorithm_init(int *port, int *num_threads) {
-        is_sjf = !(strcmp(alg_to_use, "SJF") && strcmp(alg_to_use, "sjf"));
-        is_rr = !(strcmp(alg_to_use, "RR") && strcmp(alg_to_use, "rr"));
-        is_mlfb = !(strcmp(alg_to_use, "MLFB") && strcmp(alg_to_use, "mlfb"));
+  is_sjf = !(strcmp(alg_to_use, "SJF") && strcmp(alg_to_use, "sjf"));
+  is_rr = !(strcmp(alg_to_use, "RR") && strcmp(alg_to_use, "rr"));
+  is_mlfb = !(strcmp(alg_to_use, "MLFB") && strcmp(alg_to_use, "mlfb"));
 
-        if (is_sjf) printf("Using shortest job first scheduling algorithm ");
-        else if (is_rr) printf("Using round robin scheduling algorithm ");
-        else if (is_mlfb) printf("Using multilevel feedback scheduling algorithm ");
-        else {
-                printf("Not using a valid scheduling algorithm. Goodbye!\n");
-                abort();
-        }
-        printf("with %d threads on port %d\n", *num_threads, *port);
+  if (is_sjf) printf("Using shortest job first scheduling algorithm ");
+  else if (is_rr) printf("Using round robin scheduling algorithm ");
+  else if (is_mlfb) printf("Using multilevel feedback scheduling algorithm ");
+  else {
+    printf("Not using a valid scheduling algorithm. Goodbye!\n");
+    abort();
+  }
+  printf("with %d threads on port %d\n", *num_threads, *port);
 
 }
 
@@ -99,7 +101,6 @@ void rcb_init_t() {
   int fd;
 
   for (;;) {
-    printf("Waiting for client request...\n");
     network_wait();
     for (fd = network_open(); fd >= 0; fd = network_open()) {
       pthread_t init_thread;
@@ -108,7 +109,20 @@ void rcb_init_t() {
       pthread_create(&init_thread, NULL, init_client, fdp);
     }
   }
+}
 
+/* Thread safe access to queue */
+void lock_enqueue(rcb *new_rcb, queue *queue) {
+  pthread_mutex_lock(&mutex);
+  enqueue(queue, new_rcb->rcb_priority, new_rcb);
+  pthread_mutex_unlock(&mutex);
+  sem_post(&sem); //increment when enqueue
+}
+
+/* Runner responsible for creating request control blocks
+ * for the passed file descriptor. The buffer is local to
+ * threads to avoid race conditions. */
+void *init_client(void *data) {
   int *fdp = (int *) data;
   int fd = *fdp;
 
@@ -217,7 +231,8 @@ rcb *lock_dequeue(int len) {
         return popped_rcb;
 }
 
-/* Runner to process request control blocks */
+/* Runner to process request control blocks implemented
+ * with a semaphore to prevent busy waiting*/
 void *work(void *data) {
   char *buffer = malloc(sizeof(char) * MAX_HTTP_SIZE);
   memset(buffer, 0, sizeof(char) * MAX_HTTP_SIZE);
@@ -228,7 +243,7 @@ void *work(void *data) {
   }
   while (1) {
     int len = -1;
-    //TODO: Fix this busy waiting
+    sem_wait(&sem); //wake up when queue has rcbs
     popped_rcb = lock_dequeue(len); //get the next block in schedule
     if (popped_rcb) {
       if ((is_mlfb)) {

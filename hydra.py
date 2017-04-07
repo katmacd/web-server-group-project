@@ -73,6 +73,7 @@ class DeadMan(threading.Thread):
 
 
 class RequestHead(threading.Thread):
+
     def __init__(self, delay, pause, file):
         global num
         threading.Thread.__init__(self)
