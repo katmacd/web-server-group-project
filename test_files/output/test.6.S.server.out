@@ -1,0 +1,47 @@
+Using shortest job first scheduling algorithm with 10 threads on port 38080
+Waiting for client request...
+Request for file 'test_files/large/size_10.txt' admitted.
+Request for file 'test_files/large/size_12.txt' admitted.
+Sent 8892 bytes of file 'test_files/large/size_10.txt'
+Sent 1348 bytes of file 'test_files/large/size_10.txt'
+Request for file 'test_files/large/size_10.txt' completed.
+Sent 8892 bytes of file 'test_files/large/size_12.txt'
+Sent 3396 bytes of file 'test_files/large/size_12.txt'
+Request for file 'test_files/large/size_12.txt' completed.
+Request for file 'test_files/large/size_16.txt' admitted.
+Sent 8892 bytes of file 'test_files/large/size_16.txt'
+Sent 7492 bytes of file 'test_files/large/size_16.txt'
+Request for file 'test_files/large/size_16.txt' completed.
+Request for file 'test_files/large/size_32.txt' admitted.
+Sent 8892 bytes of file 'test_files/large/size_32.txt'
+Sent 8892 bytes of file 'test_files/large/size_32.txt'
+Sent 8892 bytes of file 'test_files/large/size_32.txt'
+Sent 6092 bytes of file 'test_files/large/size_32.txt'
+Request for file 'test_files/large/size_32.txt' completed.
+Request for file 'test_files/large/size_64.txt' admitted.
+Request for file 'test_files/large/size_128.txt' admitted.
+Sent 8892 bytes of file 'test_files/large/size_64.txt'
+Sent 8892 bytes of file 'test_files/large/size_64.txt'
+Sent 8892 bytes of file 'test_files/large/size_64.txt'
+Sent 8892 bytes of file 'test_files/large/size_64.txt'
+Sent 8892 bytes of file 'test_files/large/size_128.txt'
+Sent 8892 bytes of file 'test_files/large/size_128.txt'
+Sent 8892 bytes of file 'test_files/large/size_64.txt'
+Sent 8892 bytes of file 'test_files/large/size_128.txt'
+Sent 8892 bytes of file 'test_files/large/size_64.txt'
+Sent 8892 bytes of file 'test_files/large/size_128.txt'
+Sent 8892 bytes of file 'test_files/large/size_64.txt'
+Sent 8892 bytes of file 'test_files/large/size_128.txt'
+Sent 3292 bytes of file 'test_files/large/size_64.txt'
+Request for file 'test_files/large/size_64.txt' completed.
+Sent 8892 bytes of file 'test_files/large/size_128.txt'
+Sent 8892 bytes of file 'test_files/large/size_128.txt'
+Sent 8892 bytes of file 'test_files/large/size_128.txt'
+Sent 8892 bytes of file 'test_files/large/size_128.txt'
+Sent 8892 bytes of file 'test_files/large/size_128.txt'
+Sent 8892 bytes of file 'test_files/large/size_128.txt'
+Sent 8892 bytes of file 'test_files/large/size_128.txt'
+Sent 8892 bytes of file 'test_files/large/size_128.txt'
+Sent 8892 bytes of file 'test_files/large/size_128.txt'
+Sent 6584 bytes of file 'test_files/large/size_128.txt'
+Request for file 'test_files/large/size_128.txt' completed.

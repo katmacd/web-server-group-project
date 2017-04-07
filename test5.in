@@ -1,0 +1,8 @@
+38080
+
+0.1 0 test_files/large/size_10.txt
+0.2 0 test_files/large/size_12.txt
+0.3 0 test_files/large/size_16.txt
+0.4 0 test_files/large/size_32.txt
+0.5 0 test_files/large/size_64.txt
+0.6 0 test_files/large/size_128.txt
